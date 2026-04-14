@@ -1,0 +1,42 @@
+[model]
+min_image_size = 524
+max_image_size = 2880
+use_torch_compile = false
+enable_cpu_offload = false
+output_dir = "./outputs"
+
+[[models]]
+path = "https://huggingface.co/IbarakiDouji/WAI-NSFW-illustrious-SDXL/blob/main/waiIllustriousSDXL_v160.safetensors"
+name = "v16"
+
+[prompts]
+quality_tags = "masterpiece, best quality, amazing quality, {prompt}"
+default_negative = "sensitive, nsfw, explicit, bad quality, worst quality, worst detail, sketch, censor"
+default_aspect_ratio = "768 x 1216"
+
+
+[samplers]
+list = [
+    "DPM++ 2M Karras",
+    "DPM++ SDE Karras",
+    "DPM++ 2M SDE Karras",
+    "Euler",
+    "Euler a",
+    "DDIM"
+]
+
+[aspect_ratios]
+list = [
+    "1536 x 1536",
+    "1728 x 1344",
+    "1344 x 1728",
+    "1824 x 1248",
+    "1248 x 1824",
+    "2016 x 1152",
+    "1152 x 2016",
+    "2304 x 960",
+    "960 x 2304",
+    "768 x 1216",
+    "1216 x 768",
+    "Custom"
+]

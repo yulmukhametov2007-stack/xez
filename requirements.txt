@@ -1,0 +1,10 @@
+accelerate>=1.2.1
+diffusers>=0.32.1
+gradio==6.10.0
+huggingface-hub==0.34.3
+hf-transfer>=0.1.9
+spaces>=0.32.0
+torch>=2.4.0
+transformers>=4.48.0
+tomli>=2.0.1
+pydantic==2.12.5
