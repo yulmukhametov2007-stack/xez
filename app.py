@@ -6,9 +6,8 @@ import torch
 import json
 import utils
 import logging
-from diffusers.models import AutoencoderKL
+from diffusers import StableDiffusionXLPipeline, EulerAncestralDiscreteScheduler
 from config import (
-    MODELS,
     MIN_IMAGE_SIZE,
     MAX_IMAGE_SIZE,
     OUTPUT_DIR,
@@ -17,7 +16,7 @@ from config import (
     QUALITY_TAGS,
     sampler_list,
     aspect_ratios,
-    css as config_css # Импортируем базовый CSS из конфига, если он там есть
+    css as config_css 
 )
 import time
 from typing import List, Dict, Tuple
@@ -75,14 +74,14 @@ def generate(
     guidance_scale: float = 5.0,
     num_inference_steps: int = 20,
     sampler: str = "Euler a",
-    model_name: str = "v14",
+    model_name: str = "Heartsync",
     aspect_ratio_selector: str = DEFAULT_ASPECT_RATIO,
     add_quality_tags: bool = True,
     progress: gr.Progress = gr.Progress(track_tqdm=True),
 ) -> Tuple[List[str], Dict]:
     start_time = time.time()
     backup_scheduler = None
-    
+    pipe = None
     
     try:
         torch.cuda.empty_cache()
@@ -110,7 +109,10 @@ def generate(
 
         width, height = utils.preprocess_image_dimensions(width, height)
 
-        pipe = pipes[model_name]
+        pipe = pipes.get(model_name)
+        if pipe is None:
+            raise GenerationError(f"Модель {model_name} не загружена")
+            
         backup_scheduler = pipe.scheduler
         pipe.scheduler = utils.get_scheduler(pipe.scheduler.config, sampler)
             
@@ -122,7 +124,7 @@ def generate(
             "num_inference_steps": num_inference_steps,
             "seed": seed,
             "sampler": sampler,
-            "Model": "WAI NSFW illustrious SDXL " + model_name,
+            "Model": "Heartsync/NSFW-Uncensored",
         }
         
         images = pipe(
@@ -156,18 +158,30 @@ def generate(
             pipe.scheduler = backup_scheduler
         utils.free_memory()
 
-if torch.cuda.is_available():
-    pipes = {}
-    try:
-        vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", torch_dtype=torch.float16)
-        for model in MODELS:
-            pipes[model['name']] = utils.load_pipeline(model['path'], device, vae=vae)
-    except Exception as e:
-        for model in MODELS:
-            if model['name'] not in pipes:
-                pipes[model['name']] = utils.load_pipeline(model['path'], device)
-else:
-    pipe = utils.load_pipeline(MODELS[0]['name'], torch.device("cpu"))
+# ------------------------------------------------------------
+# ЗАГРУЗКА МОДЕЛИ HEARTSYNC
+# ------------------------------------------------------------
+pipes = {}
+logger.info("Запуск загрузки модели Heartsync/NSFW-Uncensored...")
+try:
+    pipe = StableDiffusionXLPipeline.from_pretrained(
+        "Heartsync/NSFW-Uncensored",
+        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+        variant="fp16" if torch.cuda.is_available() else None,
+        use_safetensors=True,
+    )
+    pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(pipe.scheduler.config)
+    pipe.to(device)
+    
+    if torch.cuda.is_available():
+        # Оптимизация VRAM (из app1500.py)
+        for sub in (pipe.text_encoder, pipe.text_encoder_2, pipe.vae, pipe.unet):
+            sub.to(torch.float16)
+            
+    pipes["Heartsync"] = pipe
+    logger.info("Модель успешно загружена!")
+except Exception as e:
+    logger.error(f"Критическая ошибка загрузки модели: {e}")
 
 def update_history(new_images, metadata, current_history_data):
     if current_history_data is None:
@@ -195,7 +209,7 @@ def update_history(new_images, metadata, current_history_data):
     return current_history_data, gallery_images
 
 
-# Интеграция вашего CSS
+# Интеграция CSS
 fixed_css = config_css + """
 :root {
   --gradient-primary: linear-gradient(45deg, #c136eb, #4EACEF);
@@ -206,14 +220,13 @@ fixed_css = config_css + """
 .main-card {
     width: 100% !important;
     max-width: 1000px !important;
-    margin: 2rem auto !important; /* Отступы сверху/снизу и auto по бокам для центрирования */
+    margin: 2rem auto !important;
     padding: 0 1rem !important;
     display: flex !important;
     flex-direction: column !important;
     align-self: center !important;
 }
 
-/* Градиентный заголовок из вашего дизайна */
 .custom-title {
     font-size: clamp(1.5rem, 4vw, 2.2rem);
     font-weight: 700;
@@ -232,7 +245,6 @@ fixed_css = config_css + """
     color: #888;
 }
 
-/* Стили панелей и боксов под ваш CSS */
 .panel, div[class*="panel"] {
     border-radius: 12px !important;
     box-shadow: var(--box-shadow-custom) !important;
@@ -245,7 +257,6 @@ fixed_css = config_css + """
     box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12) !important;
 }
 
-/* Кнопка генерации под ваш CSS */
 button.primary {
     background: #1565c0 !important;
     border: none !important;
@@ -263,18 +274,15 @@ button.primary:hover {
     transform: translateY(-2px) !important;
 }
 
-/* Инпуты */
 textarea, input[type="text"] {
     border-radius: 8px !important;
     resize: none !important;
 }
 
-/* Скрываем миниатюры в галерее */
 dialog .thumbnails, dialog button[aria-label^="Thumbnail"], dialog [data-testid="thumbnail-container"] {
     display: none !important;
 }
 
-/* Стили промпта в галерее */
 .caption, figcaption, div[class*="caption"], span[class*="caption"] {
     white-space: pre-wrap !important; 
     word-break: break-word !important;
@@ -286,22 +294,10 @@ dialog .thumbnails, dialog button[aria-label^="Thumbnail"], dialog [data-testid=
     padding-top: 10px !important;
 }
 
-/* Большая картинка */
 dialog .image-container, dialog .wrapper {
     max-height: 75vh !important;
 }
 
-/* Кнопка смены темы */
-#theme-btn {
-    border-radius: 8px;
-    background: transparent;
-    border: 1px solid var(--border-color-primary);
-    transition: all 0.2s ease;
-}
-#theme-btn:hover {
-    background: var(--background-fill-secondary);
-}
-/* СТИЛИ ДЛЯ ОДИНОЧНОЙ КАРТИНКИ (КАК НА РЕФЕРЕНСЕ) */
 #result-image {
     padding: 0 !important;
     background: transparent !important;
@@ -315,16 +311,14 @@ dialog .image-container, dialog .wrapper {
     width: 100% !important;
     height: auto !important;
     max-height: 85vh !important;
-    object-fit: cover !important; /* Убирает черные полосы */
+    object-fit: cover !important;
 }
 
-/* КРАСИВЫЙ ФОН СТРАНИЦЫ (Глубокий космический/неоновый градиент) */
 body, .gradio-container, .wrap {
     background: radial-gradient(circle at 50% 0%, #2a164d 0%, #0d0f18 50%, #050508 100%) !important;
     background-attachment: fixed !important;
 }
 
-/* ЭФФЕКТ МАТОВОГО СТЕКЛА ДЛЯ ПАНЕЛЕЙ (Glassmorphism) */
 .panel, div[class*="panel"] {
     background: rgba(20, 22, 30, 0.45) !important;
     backdrop-filter: blur(12px) !important;
@@ -334,7 +328,6 @@ body, .gradio-container, .wrap {
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5) !important;
 }
 
-/* Затемняем поля ввода для красивого контраста */
 textarea, input[type="text"], input[type="number"], .gr-box {
     background: rgba(10, 12, 18, 0.7) !important;
     border: 1px solid rgba(255, 255, 255, 0.1) !important;
@@ -346,17 +339,14 @@ textarea:focus, input[type="text"]:focus {
     box-shadow: 0 0 10px rgba(193, 54, 235, 0.3) !important;
 }
 
-/* Удаляем кнопку из CSS (если оставалась) */
 #theme-btn { display: none !important; }
 
-/* СКРЫВАЕМ ТЕКСТ НА МИНИАТЮРАХ (Прячем только внутри кнопок галереи) */
 #history-gallery button .caption-label,
 #history-gallery button figcaption,
 #history-gallery button .caption {
     display: none !important;
 }
 
-/* ПОКАЗЫВАЕМ ТЕКСТ ТОЛЬКО В ОТКРЫТОМ ОКНЕ (При клике) */
 dialog .caption-label,
 dialog figcaption,
 dialog .caption {
@@ -374,7 +364,6 @@ dialog .caption {
     z-index: 1000 !important;
 }
 
-/* Прячем миниатюры по тем классам, которые вы вытащили из кода */
 dialog .thumbnail-item,
 dialog .thumbnail-small,
 dialog .svelte-7anmrz {
@@ -385,29 +374,19 @@ dialog .svelte-7anmrz {
 }
 """
 
-theme_toggle_js = """
-function toggle_theme() {
-    const isDark = document.body.classList.contains('dark');
-    if (isDark) { document.body.classList.remove('dark'); } 
-    else { document.body.classList.add('dark'); }
-}
-"""
-
-
 with gr.Blocks() as demo:
     history_data_state = gr.State([])
-    hidden_model_name = gr.State(MODELS[0]['name']) 
+    hidden_model_name = gr.State("Heartsync") 
     hidden_metadata = gr.State({}) 
 
-    # Тот самый контейнер, который теперь центрируется
     with gr.Column(elem_classes="main-card"):
         
         with gr.Row(variant="panel"):
             gr.HTML(
                 """
                 <div style="text-align: center; width: 100%;">
-                    <h1 class="custom-title">WAI NSFW illustrious SDXL</h1>
-                    <div class="custom-subtitle">Gradio демо для <a href="https://civitai.com/models/827184" target="_blank" style="color: inherit; text-decoration: underline;">WAI NSFW illustrious SDXL</a></div>
+                    <h1 class="custom-title">Heartsync NSFW-Uncensored SDXL</h1>
+                    <div class="custom-subtitle">Интерфейс для генерации на базе <a href="https://huggingface.com/Heartsync/NSFW-Uncensored" target="_blank" style="color: inherit; text-decoration: underline;">Heartsync SDXL</a></div>
                 </div>
                 """
             )
@@ -473,7 +452,7 @@ with gr.Blocks() as demo:
                 height='auto',
                 show_label=False,
                 object_fit="contain",
-                elem_id="history-gallery"  # <-- Добавили ID
+                elem_id="history-gallery"
             )
 
     aspect_ratio_selector.change(
