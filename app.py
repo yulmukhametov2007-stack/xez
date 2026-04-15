@@ -174,9 +174,13 @@ try:
     pipe.to(device)
     
     if torch.cuda.is_available():
-        # Оптимизация VRAM (из app1500.py)
+        # Оптимизация VRAM
         for sub in (pipe.text_encoder, pipe.text_encoder_2, pipe.vae, pipe.unet):
             sub.to(torch.float16)
+            
+        # --- НОВЫЕ СТРОКИ ДЛЯ ЗАЩИТЫ ОТ OOM ---
+        pipe.enable_vae_slicing()
+        pipe.enable_vae_tiling()
             
     pipes["Heartsync"] = pipe
     logger.info("Модель успешно загружена!")
