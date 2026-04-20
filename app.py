@@ -7,6 +7,9 @@ import json
 import utils
 import logging
 from diffusers import StableDiffusionXLPipeline, EulerAncestralDiscreteScheduler
+# --- ДОБАВЛЕН ИМПОРТ COMPEL ---
+from compel import Compel, ReturnedEmbeddingsType
+# ------------------------------
 from config import (
     MIN_IMAGE_SIZE,
     MAX_IMAGE_SIZE,
@@ -110,8 +113,10 @@ def generate(
         width, height = utils.preprocess_image_dimensions(width, height)
 
         pipe = pipes.get(model_name)
-        if pipe is None:
-            raise GenerationError(f"Модель {model_name} не загружена")
+        compel_proc = pipes.get("compel")
+        
+        if pipe is None or compel_proc is None:
+            raise GenerationError(f"Модель {model_name} или модуль Compel не загружены")
             
         backup_scheduler = pipe.scheduler
         pipe.scheduler = utils.get_scheduler(pipe.scheduler.config, sampler)
@@ -127,9 +132,21 @@ def generate(
             "Model": "Heartsync/NSFW-Uncensored",
         }
         
+        # --- ГЕНЕРАЦИЯ ЭМБЕДДИНГОВ ЧЕРЕЗ COMPEL С ПОДДЕРЖКОЙ ВЕСОВ ---
+        prompt_embeds, pooled_prompt_embeds = compel_proc(prompt)
+        negative_prompt_embeds, negative_pooled_prompt_embeds = compel_proc(negative_prompt if negative_prompt else "")
+        
+        # Выравнивание длины тензоров (обязательный шаг для Compel)
+        [prompt_embeds, negative_prompt_embeds] = compel_proc.pad_conditioning_tensors_to_same_length(
+            [prompt_embeds, negative_prompt_embeds]
+        )
+        # -------------------------------------------------------------
+        
         images = pipe(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
+            prompt_embeds=prompt_embeds,                                 # Используем эмбеддинги вместо текста
+            pooled_prompt_embeds=pooled_prompt_embeds,                   #
+            negative_prompt_embeds=negative_prompt_embeds,               #
+            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds, #
             width=width,
             height=height,
             guidance_scale=guidance_scale,
@@ -159,7 +176,7 @@ def generate(
         utils.free_memory()
 
 # ------------------------------------------------------------
-# ЗАГРУЗКА МОДЕЛИ HEARTSYNC
+# ЗАГРУЗКА МОДЕЛИ HEARTSYNC И COMPEL
 # ------------------------------------------------------------
 pipes = {}
 logger.info("Запуск загрузки модели Heartsync/NSFW-Uncensored...")
@@ -178,12 +195,23 @@ try:
         for sub in (pipe.text_encoder, pipe.text_encoder_2, pipe.vae, pipe.unet):
             sub.to(torch.float16)
             
-        # --- НОВЫЕ СТРОКИ ДЛЯ ЗАЩИТЫ ОТ OOM ---
+        # Защита от OOM
         pipe.enable_vae_slicing()
         pipe.enable_vae_tiling()
             
     pipes["Heartsync"] = pipe
-    logger.info("Модель успешно загружена!")
+    
+    # --- ИНИЦИАЛИЗАЦИЯ COMPEL ДЛЯ SDXL ---
+    compel = Compel(
+        tokenizer=[pipe.tokenizer, pipe.tokenizer_2],
+        text_encoder=[pipe.text_encoder, pipe.text_encoder_2],
+        returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
+        requires_pooled=[False, True]
+    )
+    pipes["compel"] = compel
+    # -------------------------------------
+    
+    logger.info("Модель и парсер весов Compel успешно загружены!")
 except Exception as e:
     logger.error(f"Критическая ошибка загрузки модели: {e}")
 
@@ -400,9 +428,10 @@ with gr.Blocks() as demo:
                 prompt = gr.Textbox(
                     label="Промпт",
                     lines=4,
-                    placeholder="Опишите, что вы хотите сгенерировать...",
+                    placeholder="Опишите, что вы хотите сгенерировать... (Используйте скобки для весов, например: (слово:1.5))",
                     show_label=True,
-                    container=True
+                    container=True,
+                    # show_copy_button=True
                 )
             with gr.Column(scale=1, min_width=150):
                 run_button = gr.Button("Generate", variant="primary", size="lg")
@@ -420,7 +449,7 @@ with gr.Blocks() as demo:
             negative_prompt = gr.Textbox(
                 label="Негативный промпт",
                 lines=2,
-                placeholder="Опишите, чего не должно быть на изображении...",
+                placeholder="Опишите, чего не должно быть на изображении... (Можно использовать (слово:1.5))",
                 value=DEFAULT_NEGATIVE_PROMPT,
             )
             
@@ -457,6 +486,12 @@ with gr.Blocks() as demo:
                 show_label=False,
                 object_fit="contain",
                 elem_id="history-gallery"
+            )
+            selected_history_info = gr.Textbox(
+                label="Промпт и параметры выбранной генерации (нажмите на картинку в истории)",
+                # show_copy_button=True,
+                interactive=False,
+                lines=3
             )
 
     aspect_ratio_selector.change(
@@ -513,6 +548,17 @@ with gr.Blocks() as demo:
     ).then(
         fn=lambda: gr.update(interactive=True, value="Generate"),
         outputs=run_button,
+    )
+
+    def on_history_select(evt: gr.SelectData, history_list):
+        if history_list and evt.index < len(history_list):
+            return history_list[evt.index]["caption"]
+        return ""
+
+    history_gallery.select(
+        fn=on_history_select,
+        inputs=[history_data_state],
+        outputs=[selected_history_info]
     )
 
 if __name__ == "__main__":
