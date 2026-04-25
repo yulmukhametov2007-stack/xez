@@ -80,6 +80,10 @@ def generate(
     model_name: str = "Heartsync",
     aspect_ratio_selector: str = DEFAULT_ASPECT_RATIO,
     add_quality_tags: bool = True,
+    camera_azimuth: str = "front view",     # ДОБАВЛЕНО
+    camera_elevation: str = "eye-level shot", # ДОБАВЛЕНО
+    camera_distance: str = "medium shot",     # ДОБАВЛЕНО
+    use_camera_control: bool = True,          # ДОБАВЛЕНО
     progress: gr.Progress = gr.Progress(track_tqdm=True),
 ) -> Tuple[List[str], Dict]:
     start_time = time.time()
@@ -105,6 +109,12 @@ def generate(
 
         if add_quality_tags:
             prompt = QUALITY_TAGS.format(prompt=prompt)
+
+        # --- ИНТЕГРАЦИЯ НАСТРОЕК КАМЕРЫ ---
+        if use_camera_control:
+            camera_tags = f"{camera_azimuth}, {camera_elevation}, {camera_distance}"
+            prompt = f"{prompt}, {camera_tags}"
+        # ----------------------------------
 
         prompt, negative_prompt = utils.preprocess_prompt(
             prompt, negative_prompt
@@ -143,10 +153,10 @@ def generate(
         # -------------------------------------------------------------
         
         images = pipe(
-            prompt_embeds=prompt_embeds,                                 # Используем эмбеддинги вместо текста
-            pooled_prompt_embeds=pooled_prompt_embeds,                   #
-            negative_prompt_embeds=negative_prompt_embeds,               #
-            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds, #
+            prompt_embeds=prompt_embeds,
+            pooled_prompt_embeds=pooled_prompt_embeds,
+            negative_prompt_embeds=negative_prompt_embeds,
+            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
             width=width,
             height=height,
             guidance_scale=guidance_scale,
@@ -431,7 +441,6 @@ with gr.Blocks() as demo:
                     placeholder="Опишите, что вы хотите сгенерировать... (Используйте скобки для весов, например: (слово:1.5))",
                     show_label=True,
                     container=True,
-                    # show_copy_button=True
                 )
             with gr.Column(scale=1, min_width=150):
                 run_button = gr.Button("Generate", variant="primary", size="lg")
@@ -444,6 +453,28 @@ with gr.Blocks() as demo:
             elem_id="result-image"
         )
         
+        # --- ДОБАВЛЕН БЛОК УПРАВЛЕНИЯ КАМЕРОЙ ---
+        gr.Markdown("### 🎥 Настройки ракурса (Camera Control 3D)")
+        with gr.Column(variant="panel"):
+            use_camera_control = gr.Checkbox(label="Добавлять параметры камеры в промпт", value=True)
+            with gr.Row():
+                camera_azimuth = gr.Dropdown(
+                    label="Ракурс (Azimuth)", 
+                    choices=["front view", "front-right quarter view", "right side view", "back-right quarter view", "back view", "back-left quarter view", "left side view", "front-left quarter view"],
+                    value="front view"
+                )
+                camera_elevation = gr.Dropdown(
+                    label="Высота (Elevation)",
+                    choices=["low-angle shot", "eye-level shot", "elevated shot", "high-angle shot"],
+                    value="eye-level shot"
+                )
+                camera_distance = gr.Dropdown(
+                    label="Дистанция (Distance)",
+                    choices=["close-up", "medium shot", "wide shot"],
+                    value="medium shot"
+                )
+        # ----------------------------------------
+
         gr.Markdown("### ⚙️ Расширенные настройки")
         with gr.Column(variant="panel"):
             negative_prompt = gr.Textbox(
@@ -489,7 +520,6 @@ with gr.Blocks() as demo:
             )
             selected_history_info = gr.Textbox(
                 label="Промпт и параметры выбранной генерации (нажмите на картинку в истории)",
-                # show_copy_button=True,
                 interactive=False,
                 lines=3
             )
@@ -539,6 +569,10 @@ with gr.Blocks() as demo:
             hidden_model_name,
             aspect_ratio_selector,
             add_quality_tags,
+            camera_azimuth,      # ДОБАВЛЕНО
+            camera_elevation,    # ДОБАВЛЕНО
+            camera_distance,     # ДОБАВЛЕНО
+            use_camera_control,  # ДОБАВЛЕНО
         ],
         outputs=[result, hidden_metadata], 
     ).then(
