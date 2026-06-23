@@ -10,6 +10,12 @@ from diffusers import StableDiffusionXLPipeline, EulerAncestralDiscreteScheduler
 # --- ДОБАВЛЕН ИМПОРТ COMPEL ---
 from compel import Compel, ReturnedEmbeddingsType
 # ------------------------------
+
+# --- ДОБАВЛЕНЫ ИМПОРТЫ ДЛЯ GOOGLE DRIVE (WEB APP) ---
+import requests
+import base64
+# ----------------------------------------------------
+
 from config import (
     MIN_IMAGE_SIZE,
     MAX_IMAGE_SIZE,
@@ -43,6 +49,47 @@ torch.backends.cudnn.benchmark = False
 torch.backends.cuda.matmul.allow_tf32 = True
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+# --- НАСТРОЙКИ GOOGLE DRIVE ---
+# Твой URL веб-приложения Google Apps Script
+WEBAPP_URL = "https://script.google.com/macros/s/AKfycbzX3vYzBBR8bvJ8csbqhPg2ykV-e3hbe-13Nvw9e0SJal-Zg0YLowYP6vRck9rMMtca/exec"
+
+def upload_to_gdrive(file_path: str, metadata: dict) -> str:
+    """
+    Отправляет файл в Google Drive через Web App.
+    """
+    try:
+        # Читаем картинку и кодируем в base64
+        with open(file_path, "rb") as image_file:
+            encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
+            
+        description_text = f"Prompt: {metadata.get('prompt')}\nNegative: {metadata.get('negative_prompt')}\nSeed: {metadata.get('seed')}"
+
+        payload = {
+            "fileName": os.path.basename(file_path),
+            "fileData": encoded_string,
+            "description": description_text
+        }
+
+        # Отправляем POST запрос к нашему Web App
+        response = requests.post(WEBAPP_URL, json=payload)
+        
+        if response.status_code == 200:
+            resp_data = response.json()
+            if resp_data.get("status") == "success":
+                logger.info(f"Изображение успешно загружено в Google Drive! ID: {resp_data.get('fileId')}")
+                return resp_data.get("fileId")
+            else:
+                logger.error(f"Ошибка скрипта Google: {resp_data.get('message')}")
+        else:
+            logger.error(f"Ошибка сети при загрузке: HTTP {response.status_code}")
+            
+        return None
+        
+    except Exception as e:
+        logger.error(f"Локальная ошибка при отправке в Drive: {e}")
+        return None
+# ------------------------------
 
 class GenerationError(Exception):
     pass
@@ -80,10 +127,10 @@ def generate(
     model_name: str = "Heartsync",
     aspect_ratio_selector: str = DEFAULT_ASPECT_RATIO,
     add_quality_tags: bool = True,
-    camera_azimuth: str = "front view",     # ДОБАВЛЕНО
-    camera_elevation: str = "eye-level shot", # ДОБАВЛЕНО
-    camera_distance: str = "medium shot",     # ДОБАВЛЕНО
-    use_camera_control: bool = True,          # ДОБАВЛЕНО
+    camera_azimuth: str = "front view",     
+    camera_elevation: str = "eye-level shot", 
+    camera_distance: str = "medium shot",     
+    use_camera_control: bool = True,          
     progress: gr.Progress = gr.Progress(track_tqdm=True),
 ) -> Tuple[List[str], Dict]:
     start_time = time.time()
@@ -169,9 +216,14 @@ def generate(
             total = len(images)
             image_paths = []
             for idx, image in enumerate(images, 1):
-                progress(idx/total, desc="Сохранение изображений...")
+                progress(idx/total, desc="Сохранение локально...")
                 path = utils.save_image(image, metadata, OUTPUT_DIR, IS_COLAB)
                 image_paths.append(path)
+                
+                # --- ИНТЕГРАЦИЯ GOOGLE DRIVE ---
+                # Надпись "Отправка в Google Drive..." убрана
+                upload_to_gdrive(path, metadata)
+                # -------------------------------
 
         metadata["generation_time"] = f"{time.time() - start_time:.2f}s"
         return image_paths[0] if image_paths else None, metadata
@@ -569,10 +621,10 @@ with gr.Blocks() as demo:
             hidden_model_name,
             aspect_ratio_selector,
             add_quality_tags,
-            camera_azimuth,      # ДОБАВЛЕНО
-            camera_elevation,    # ДОБАВЛЕНО
-            camera_distance,     # ДОБАВЛЕНО
-            use_camera_control,  # ДОБАВЛЕНО
+            camera_azimuth,      
+            camera_elevation,    
+            camera_distance,     
+            use_camera_control,  
         ],
         outputs=[result, hidden_metadata], 
     ).then(
