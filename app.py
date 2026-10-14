@@ -103,51 +103,6 @@ def save_result_to_gdrive(image_path, metadata):
         return "✅ Сохранено в Google Drive"
     return "❌ Не удалось сохранить — проверьте соединение и попробуйте ещё раз"
 
-# --- СТИЛИСТИКИ (пресеты стилей) ---
-STYLE_PRESETS = {
-    "Без стиля": {
-        "prompt": "{prompt}",
-        "negative": "",
-    },
-    "Аниме": {
-        "prompt": "anime artwork, {prompt}, anime style, key visual, vibrant, studio anime, highly detailed",
-        "negative": "photo, photorealistic, realism, black and white, low contrast",
-    },
-    "Реализм (фото)": {
-        "prompt": "cinematic photo, {prompt}, 35mm photograph, film grain, bokeh, professional, 4k, highly detailed",
-        "negative": "drawing, painting, sketch, anime, cartoon, illustration, blurry, deformed",
-    },
-    "Цифровая живопись": {
-        "prompt": "concept art, {prompt}, digital artwork, illustrative, painterly, matte painting, highly detailed",
-        "negative": "photo, photorealistic, realism, low contrast",
-    },
-    "Киберпанк": {
-        "prompt": "cyberpunk style, {prompt}, neon lighting, futuristic, dystopian, high tech, vibrant neon colors, cinematic",
-        "negative": "natural, rural, vintage, daylight, low contrast",
-    },
-    "Фэнтези": {
-        "prompt": "ethereal fantasy concept art, {prompt}, magnificent, celestial, epic, majestic, magical, dreamy",
-        "negative": "photographic, realistic, realism, 35mm film, dslr",
-    },
-    "3D-рендер": {
-        "prompt": "professional 3d model, {prompt}, octane render, volumetric lighting, dramatic lighting, highly detailed",
-        "negative": "ugly, deformed, noisy, low poly, blurry, painting, flat",
-    },
-    "Пиксель-арт": {
-        "prompt": "pixel-art, {prompt}, low-res, blocky, pixel art style, 8-bit graphics",
-        "negative": "sloppy, messy, blurry, noisy, highly detailed, ultra textured, photo, realistic",
-    },
-    "Акварель": {
-        "prompt": "watercolor painting, {prompt}, soft colors, wet brush strokes, artistic, paper texture",
-        "negative": "photo, 3d render, harsh lines, digital art, neon",
-    },
-    "Нуар (ч/б)": {
-        "prompt": "film noir style, {prompt}, black and white, monochrome, dramatic shadows, high contrast, cinematic",
-        "negative": "colorful, vibrant colors, saturated",
-    },
-}
-# --------------------------------------
-
 # --- ПЕРЕВОД РУССКОГО ОПИСАНИЯ В ПРОМПТ ---
 def translate_ru_to_en(text: str) -> str:
     """Переводит текст с русского на английский через бесплатный эндпоинт Google Translate."""
@@ -216,11 +171,6 @@ def generate(
     model_name: str = "Heartsync",
     aspect_ratio_selector: str = DEFAULT_ASPECT_RATIO,
     add_quality_tags: bool = True,
-    camera_azimuth: str = "front view",     
-    camera_elevation: str = "eye-level shot", 
-    camera_distance: str = "medium shot",     
-    use_camera_control: bool = True,          
-    style_name: str = "Без стиля",
     progress: gr.Progress = gr.Progress(track_tqdm=True),
 ) -> Tuple[List[str], Dict]:
     start_time = time.time()
@@ -247,20 +197,6 @@ def generate(
         if add_quality_tags:
             prompt = QUALITY_TAGS.format(prompt=prompt)
 
-        # --- ИНТЕГРАЦИЯ НАСТРОЕК КАМЕРЫ ---
-        if use_camera_control:
-            camera_tags = f"{camera_azimuth}, {camera_elevation}, {camera_distance}"
-            prompt = f"{prompt}, {camera_tags}"
-        # ----------------------------------
-
-        # --- ПРИМЕНЕНИЕ СТИЛИСТИКИ ---
-        style_conf = STYLE_PRESETS.get(style_name)
-        if style_conf and style_name != "Без стиля":
-            prompt = style_conf["prompt"].format(prompt=prompt)
-            if style_conf["negative"]:
-                negative_prompt = f"{negative_prompt}, {style_conf['negative']}" if negative_prompt else style_conf["negative"]
-        # ------------------------------
-
         prompt, negative_prompt = utils.preprocess_prompt(
             prompt, negative_prompt
         )    
@@ -284,7 +220,6 @@ def generate(
             "num_inference_steps": num_inference_steps,
             "seed": seed,
             "sampler": sampler,
-            "style": style_name,
             "Model": "Heartsync/NSFW-Uncensored",
         }
         
@@ -856,34 +791,7 @@ with gr.Blocks() as demo:
                 save_gdrive_button = gr.Button("💾 Сохранить в Google Drive", size="lg")
                 gdrive_status = gr.Markdown("")
 
-                # --- ДОБАВЛЕН БЛОК УПРАВЛЕНИЯ КАМЕРОЙ ---
-                with gr.Accordion("🎥 Настройки ракурса (Camera Control 3D)", open=True):
-                    use_camera_control = gr.Checkbox(label="Добавлять параметры камеры в промпт", value=True)
-                    with gr.Row():
-                        camera_azimuth = gr.Dropdown(
-                            label="Ракурс (Azimuth)", 
-                            choices=["front view", "front-right quarter view", "right side view", "back-right quarter view", "back view", "back-left quarter view", "left side view", "front-left quarter view"],
-                            value="front view"
-                        )
-                        camera_elevation = gr.Dropdown(
-                            label="Высота (Elevation)",
-                            choices=["low-angle shot", "eye-level shot", "elevated shot", "high-angle shot"],
-                            value="eye-level shot"
-                        )
-                        camera_distance = gr.Dropdown(
-                            label="Дистанция (Distance)",
-                            choices=["close-up", "medium shot", "wide shot"],
-                            value="medium shot"
-                        )
-                # ----------------------------------------
-
                 with gr.Accordion("⚙️ Расширенные настройки", open=True):
-                    style_selector = gr.Dropdown(
-                        label="Стилистика",
-                        choices=list(STYLE_PRESETS.keys()),
-                        value="Без стиля",
-                        interactive=True,
-                    )
                     negative_prompt = gr.Textbox(
                         label="Негативный промпт",
                         lines=2,
@@ -1072,11 +980,6 @@ with gr.Blocks() as demo:
             hidden_model_name,
             aspect_ratio_selector,
             add_quality_tags,
-            camera_azimuth,      
-            camera_elevation,    
-            camera_distance,     
-            use_camera_control,
-            style_selector,
         ],
         outputs=[result, hidden_metadata], 
     ).then(
